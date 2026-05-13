@@ -113,6 +113,7 @@ function AuthModal({ open, onClose, lang, navigate }) {
   const { signIn } = useAuth();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState("");
 
@@ -224,14 +225,59 @@ function AuthModal({ open, onClose, lang, navigate }) {
           </label>
           <label>
             {t.password}
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={showPassword ? "Votre mot de passe" : "••••••••"}
+                style={{ paddingRight: 44, width: "100%" }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword
+                  ? (lang === "fr" ? "Masquer le mot de passe" : "Hide password")
+                  : (lang === "fr" ? "Afficher le mot de passe" : "Show password")}
+                title={showPassword
+                  ? (lang === "fr" ? "Masquer le mot de passe" : "Hide password")
+                  : (lang === "fr" ? "Afficher le mot de passe" : "Show password")}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 32,
+                  height: 32,
+                  display: "grid",
+                  placeItems: "center",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--ink-3)",
+                  padding: 0,
+                  borderRadius: 6,
+                }}
+              >
+                {showPassword ? (
+                  /* Eye-off icon (mot de passe visible → cliquer pour masquer) */
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                    <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                    <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                    <line x1="2" y1="2" x2="22" y2="22" />
+                  </svg>
+                ) : (
+                  /* Eye icon (mot de passe masqué → cliquer pour afficher) */
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </label>
           {err && <div className="auth-error">{err}</div>}
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ height: 48, marginTop: 8 }}>
