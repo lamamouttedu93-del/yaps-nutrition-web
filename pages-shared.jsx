@@ -36,34 +36,75 @@ function FAQItem({ q, a }) {
   );
 }
 
-/* ============ Mock Auth context (Supabase placeholder) ============ */
+/* ============ Real Supabase Auth context ============
+   Uses the singleton client created in index.html (window.YAPS_SUPABASE).
+   Identifiers are the same as the YAPS mobile app, secured by RLS. */
 const AuthCtx = React.createContext(null);
 function AuthProvider({ children }) {
-  const [user, setUser] = React.useState(() => {
-    try {
-      const raw = localStorage.getItem("yaps-mock-user");
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  });
-  const signIn = async (email, password) => {
-    // Simulate Supabase auth.signInWithPassword latency
-    await new Promise((r) => setTimeout(r, 700));
-    if (!email || !password) throw new Error("invalid");
-    if (password.length < 4) throw new Error("short");
-    const u = {
+  const sb = window.YAPS_SUPABASE;
+  const [user, setUser] = React.useState(null);
+  const [ready, setReady] = React.useState(false);
+
+  // Helper: build a UI-friendly user object from a Supabase user
+  const buildUserObject = (sbUser) => {
+    if (!sbUser) return null;
+    const email = sbUser.email || "";
+    const meta = sbUser.user_metadata || {};
+    return {
+      id: sbUser.id,
       email,
-      firstName: email.split("@")[0].split(/[.\-_]/)[0].replace(/^./, (c) => c.toUpperCase()),
-      id: "mock-" + email,
+      firstName: meta.first_name || meta.firstName
+        || email.split("@")[0].split(/[.\-_]/)[0].replace(/^./, (c) => c.toUpperCase()),
     };
+  };
+
+  // Restore session on mount + listen to auth changes
+  React.useEffect(() => {
+    if (!sb) {
+      setReady(true);
+      return;
+    }
+    sb.auth.getSession().then(({ data: { session } }) => {
+      setUser(buildUserObject(session?.user));
+      setReady(true);
+    }).catch(() => setReady(true));
+
+    const { data: { subscription } } = sb.auth.onAuthStateChange((_event, session) => {
+      setUser(buildUserObject(session?.user));
+    });
+    return () => { try { subscription.unsubscribe(); } catch {} };
+  }, [sb]);
+
+  const signIn = async (email, password) => {
+    if (!sb) throw new Error("auth-not-ready");
+    const cleanEmail = (email || "").trim().toLowerCase();
+    if (!cleanEmail || !password) throw new Error("invalid");
+    const { data, error } = await sb.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
+    if (error) {
+      // Map Supabase errors to internal codes for the UI
+      if (/credentials|invalid/i.test(error.message)) throw new Error("invalid");
+      if (/email/i.test(error.message)) throw new Error("invalid");
+      throw new Error(error.message || "invalid");
+    }
+    const u = buildUserObject(data.user);
     setUser(u);
-    try { localStorage.setItem("yaps-mock-user", JSON.stringify(u)); } catch {}
     return u;
   };
-  const signOut = () => {
+
+  const signOut = async () => {
+    if (!sb) return;
+    try { await sb.auth.signOut(); } catch {}
     setUser(null);
-    try { localStorage.removeItem("yaps-mock-user"); } catch {}
   };
-  return <AuthCtx.Provider value={{ user, signIn, signOut }}>{children}</AuthCtx.Provider>;
+
+  return (
+    <AuthCtx.Provider value={{ user, signIn, signOut, ready, supabase: sb }}>
+      {children}
+    </AuthCtx.Provider>
+  );
 }
 const useAuth = () => React.useContext(AuthCtx);
 
@@ -88,29 +129,27 @@ function AuthModal({ open, onClose, lang, navigate }) {
 
   if (!open) return null;
   const t = lang === "fr" ? {
-    title: "Connectez-vous",
-    sub: "Utilisez les identifiants de votre compte YAPS.",
+    title: "Connexion à votre espace",
+    sub: "Utilisez les mêmes identifiants que votre application mobile YAPS.",
     email: "Email",
     password: "Mot de passe",
     submit: "Se connecter",
     submitting: "Connexion…",
     forgot: "Mot de passe oublié ?",
     noAccount: "Pas encore de compte ? Téléchargez l'app",
-    err_generic: "Identifiants invalides.",
-    err_short: "Le mot de passe doit faire au moins 4 caractères.",
-    hint: "Mode démo : n'importe quel email + mot de passe (≥ 4 car.) ouvre un tableau de bord d'exemple.",
+    err_generic: "Email ou mot de passe incorrect.",
+    err_short: "Veuillez saisir votre email et votre mot de passe.",
   } : {
-    title: "Sign in",
-    sub: "Use your YAPS account credentials.",
+    title: "Sign in to your account",
+    sub: "Use the same credentials as your YAPS mobile app.",
     email: "Email",
     password: "Password",
     submit: "Sign in",
     submitting: "Signing in…",
     forgot: "Forgot password?",
     noAccount: "No account yet? Download the app",
-    err_generic: "Invalid credentials.",
-    err_short: "Password must be at least 4 characters.",
-    hint: "Demo mode: any email + password (≥ 4 chars) opens a sample dashboard.",
+    err_generic: "Invalid email or password.",
+    err_short: "Please enter your email and password.",
   };
 
   const submit = async (e) => {
@@ -118,10 +157,13 @@ function AuthModal({ open, onClose, lang, navigate }) {
     setErr("");
     setLoading(true);
     try {
+      if (!email || !password) {
+        throw new Error("missing");
+      }
       await signIn(email, password);
       onClose();
     } catch (e) {
-      setErr(e.message === "short" ? t.err_short : t.err_generic);
+      setErr(e.message === "missing" ? t.err_short : t.err_generic);
     } finally {
       setLoading(false);
     }
@@ -196,11 +238,26 @@ function AuthModal({ open, onClose, lang, navigate }) {
             {loading ? t.submitting : t.submit}
           </button>
           <div className="auth-links">
-            <a href="#" onClick={(e) => { e.preventDefault(); alert(lang === "fr" ? "Ouvrez l'app YAPS pour réinitialiser votre mot de passe." : "Open the YAPS app to reset your password."); }}>{t.forgot}</a>
+            <a href="#" onClick={async (e) => {
+              e.preventDefault();
+              const target = (email || "").trim().toLowerCase();
+              if (!target) {
+                alert(lang === "fr" ? "Saisissez d'abord votre email dans le champ ci-dessus." : "Please enter your email first.");
+                return;
+              }
+              try {
+                const sb = window.YAPS_SUPABASE;
+                await sb.auth.resetPasswordForEmail(target, {
+                  redirectTo: "yaps://reset-password",
+                });
+                alert(lang === "fr"
+                  ? "Si un compte est associé à cette adresse, vous recevrez un email pour réinitialiser votre mot de passe."
+                  : "If an account exists for this email, you will receive a password reset email.");
+              } catch (err) {
+                alert(lang === "fr" ? "Erreur lors de l'envoi. Réessayez." : "Could not send reset email. Try again.");
+              }
+            }}>{t.forgot}</a>
             <a href="#" onClick={(e) => { e.preventDefault(); onClose(); navigate("/download"); }}>{t.noAccount}</a>
-          </div>
-          <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--bg-sunken)", borderRadius: 10, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.4, fontFamily: "var(--font-mono)", letterSpacing: "0.02em" }}>
-            {t.hint}
           </div>
         </form>
       </div>
@@ -237,118 +294,229 @@ function Sparkline({ points }) {
 }
 
 function Dashboard({ lang }) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, supabase: sb } = useAuth();
+  const [profile, setProfile] = React.useState(null);
+  const [weightHistory, setWeightHistory] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState("");
+
   const t = lang === "fr" ? {
     hello: "Bonjour",
-    today: "Voici vos statistiques d'aujourd'hui",
+    today: "Voici votre tableau de bord nutritionnel",
     signout: "Se déconnecter",
-    cal: "Calories",
-    prot: "Protéines",
-    carbs: "Glucides",
-    fat: "Lipides",
+    cal: "Objectif calorique",
+    prot: "Protéines (objectif)",
+    carbs: "Glucides (objectif)",
+    fat: "Lipides (objectif)",
     weight: "Poids",
     weightSub: "30 derniers jours",
-    recent: "Repas récents",
-    viewAll: "Voir tout l'historique",
-    inApp: "Ouvrir l'app",
+    weightCurrent: "Poids actuel",
+    weightTarget: "Objectif",
+    bmi: "IMC",
+    bmr: "Métabolisme de base",
+    tdee: "Dépense énergétique totale",
+    recent: "Vos repas récents",
+    recentEmpty: "Le journal alimentaire détaillé est synchronisé dans l'application mobile YAPS. Ouvrez l'app pour consulter, ajouter ou modifier vos repas.",
+    openApp: "Ouvrir l'application YAPS",
     moreInApp: "Plus de fonctionnalités dans l'app mobile",
-    demoChip: "Mode démo · données simulées",
+    connectedChip: "Connecté à votre compte YAPS",
+    loading: "Chargement de vos données…",
+    error: "Impossible de charger vos données pour le moment.",
+    noWeight: "Pas encore d'historique de poids. Pesez-vous depuis l'app YAPS pour voir votre courbe.",
   } : {
     hello: "Hi",
-    today: "Here are your stats for today",
+    today: "Here is your nutrition dashboard",
     signout: "Sign out",
-    cal: "Calories",
-    prot: "Protein",
-    carbs: "Carbs",
-    fat: "Fat",
+    cal: "Calorie target",
+    prot: "Protein (target)",
+    carbs: "Carbs (target)",
+    fat: "Fat (target)",
     weight: "Weight",
     weightSub: "Last 30 days",
-    recent: "Recent meals",
-    viewAll: "View full history",
-    inApp: "Open the app",
+    weightCurrent: "Current weight",
+    weightTarget: "Goal",
+    bmi: "BMI",
+    bmr: "Basal metabolic rate",
+    tdee: "Total daily energy expenditure",
+    recent: "Your recent meals",
+    recentEmpty: "Your detailed food journal lives in the YAPS mobile app. Open the app to view, add or edit your meals.",
+    openApp: "Open the YAPS app",
     moreInApp: "More features in the mobile app",
-    demoChip: "Demo mode · simulated data",
+    connectedChip: "Connected to your YAPS account",
+    loading: "Loading your data…",
+    error: "Could not load your data right now.",
+    noWeight: "No weight history yet. Log a weight in the YAPS app to see your trend.",
   };
 
-  // Realistic, slightly-randomized mock numbers
+  /* ============ Fetch real data from Supabase ============ */
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!sb || !user?.id) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setLoadError("");
+
+    // 30-day window for bmi_logs
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    const sinceIso = since.toISOString();
+
+    Promise.all([
+      // Profile (single row by id)
+      sb.from("profiles")
+        .select("first_name, last_name, weight, height, goal, bmi, bmr, tdee, caloric_goal")
+        .eq("id", user.id)
+        .maybeSingle(),
+      // Weight history (last 30 days)
+      sb.from("bmi_logs")
+        .select("weight_kg, created_at")
+        .eq("user_id", user.id)
+        .gte("created_at", sinceIso)
+        .order("created_at", { ascending: true }),
+    ]).then(([profRes, weightRes]) => {
+      if (cancelled) return;
+      if (profRes.error) {
+        console.warn("[Dashboard] profile fetch error:", profRes.error.message);
+      }
+      if (weightRes.error) {
+        console.warn("[Dashboard] weight fetch error:", weightRes.error.message);
+      }
+      setProfile(profRes.data || null);
+      setWeightHistory(Array.isArray(weightRes.data) ? weightRes.data : []);
+      setLoading(false);
+    }).catch((e) => {
+      if (cancelled) return;
+      console.error("[Dashboard] unexpected error:", e);
+      setLoadError(t.error);
+      setLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [sb, user?.id]);
+
+  // Derive macros (target only — actual intake is in the mobile app)
+  // Use Macros split standards : 25% protein, 50% carbs, 25% fat
+  const cal = profile?.caloric_goal ? Math.round(profile.caloric_goal) : null;
   const macros = [
-    { k: t.cal, n: 1450, of: 2200, unit: "kcal" },
-    { k: t.prot, n: 85, of: 130, unit: "g" },
-    { k: t.carbs, n: 180, of: 275, unit: "g" },
-    { k: t.fat, n: 55, of: 75, unit: "g" },
+    { k: t.cal, n: cal, unit: "kcal" },
+    { k: t.prot, n: cal ? Math.round((cal * 0.25) / 4) : null, unit: "g" },
+    { k: t.carbs, n: cal ? Math.round((cal * 0.50) / 4) : null, unit: "g" },
+    { k: t.fat, n: cal ? Math.round((cal * 0.25) / 9) : null, unit: "g" },
   ];
-  const weightSeries = [72.8, 72.6, 72.5, 72.5, 72.3, 72.1, 72.0, 71.9, 71.9, 71.8, 71.7, 71.7, 71.6, 71.6, 71.5, 71.5, 71.5, 71.4, 71.4, 71.3, 71.3, 71.4, 71.4, 71.3, 71.3, 71.4, 71.4, 71.3, 71.4, 71.4];
-  const recentMeals = lang === "fr" ? [
-    { name: "Bol poké saumon",      kcal: 587, time: "12:42", ic: "BP" },
-    { name: "Café au lait",          kcal: 95,  time: "10:18", ic: "CL" },
-    { name: "Salade chèvre chaud",   kcal: 412, time: "13:05 hier", ic: "SC" },
-    { name: "Yaourt grec + miel",    kcal: 168, time: "16:20 hier", ic: "YG" },
-    { name: "Pâtes pesto",           kcal: 543, time: "19:45 hier", ic: "PP" },
-  ] : [
-    { name: "Salmon poke bowl",     kcal: 587, time: "12:42",    ic: "SP" },
-    { name: "Latte",                kcal: 95,  time: "10:18",    ic: "LT" },
-    { name: "Warm goat cheese salad", kcal: 412, time: "yesterday 13:05", ic: "GC" },
-    { name: "Greek yogurt + honey", kcal: 168, time: "yesterday 16:20", ic: "GY" },
-    { name: "Pesto pasta",          kcal: 543, time: "yesterday 19:45", ic: "PP" },
-  ];
+
+  // Weight series from real data (last 30 days)
+  const weightSeries = weightHistory
+    .map((r) => Number(r.weight_kg))
+    .filter((n) => Number.isFinite(n));
+
+  // Variation (first → last in the window)
+  let variation = null;
+  if (weightSeries.length >= 2) {
+    const diff = weightSeries[weightSeries.length - 1] - weightSeries[0];
+    variation = diff;
+  }
+
+  const fmt = (n) => n == null ? "—" : new Intl.NumberFormat(lang === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 1 }).format(n);
+  const currentWeight = profile?.weight
+    || (weightSeries.length ? weightSeries[weightSeries.length - 1] : null);
 
   return (
     <main>
       <section className="section" style={{ paddingTop: 60 }}>
         <div className="wrap">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
-            <span className="chip"><span className="dot" /> {t.demoChip}</span>
+            <span className="chip"><span className="dot" /> {t.connectedChip}</span>
             <button className="btn btn-ghost" onClick={signOut}>{t.signout}</button>
           </div>
           <h1 className="h2" style={{ marginTop: 24, marginBottom: 8 }}>
-            {t.hello}, <span className="grad-text">{user?.firstName || "YAPS"}</span> 👋
+            {t.hello}, <span className="grad-text">{profile?.first_name || user?.firstName || "YAPS"}</span> 👋
           </h1>
           <p className="lead" style={{ marginBottom: 36 }}>{t.today}</p>
 
-          {/* Macros today */}
-          <div className="dash-grid" style={{ marginBottom: 24 }}>
-            {macros.map((m) => {
-              const pct = Math.min(100, (m.n / m.of) * 100);
-              return (
-                <div key={m.k} className="dash-card">
-                  <div className="k">{m.k}</div>
-                  <div className="v">{m.n}<span className="of">/ {m.of} {m.unit}</span></div>
-                  <div className="dash-bar"><i style={{ width: `${pct}%` }} /></div>
-                </div>
-              );
-            })}
-          </div>
+          {loading && (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--ink-2)" }}>{t.loading}</div>
+          )}
 
-          {/* Weight card */}
-          <div className="dash-card" style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-              <div>
-                <div className="k" style={{ marginBottom: 6 }}>{t.weight} · {t.weightSub}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <span style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em" }}>71,4</span>
-                  <span style={{ color: "var(--ink-3)", fontSize: 14 }}>kg</span>
-                  <span style={{ color: "#1aa85b", fontSize: 14, fontFamily: "var(--font-mono)" }}>−1,4 kg / 30j</span>
+          {!loading && loadError && (
+            <div style={{ padding: 24, textAlign: "center", color: "#c0392b" }}>{loadError}</div>
+          )}
+
+          {!loading && !loadError && (
+            <>
+              {/* Macros target (calculated from caloric_goal) */}
+              <div className="dash-grid" style={{ marginBottom: 24 }}>
+                {macros.map((m) => (
+                  <div key={m.k} className="dash-card">
+                    <div className="k">{m.k}</div>
+                    <div className="v">
+                      {m.n == null ? "—" : m.n}
+                      <span className="of"> {m.unit}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Body summary card : weight + bmi + bmr + tdee */}
+              <div className="dash-grid" style={{ marginBottom: 24 }}>
+                <div className="dash-card">
+                  <div className="k">{t.weightCurrent}</div>
+                  <div className="v">{fmt(currentWeight)}<span className="of"> kg</span></div>
+                </div>
+                <div className="dash-card">
+                  <div className="k">{t.bmi}</div>
+                  <div className="v">{fmt(profile?.bmi)}</div>
+                </div>
+                <div className="dash-card">
+                  <div className="k">{t.bmr}</div>
+                  <div className="v">{fmt(profile?.bmr)}<span className="of"> kcal</span></div>
+                </div>
+                <div className="dash-card">
+                  <div className="k">{t.tdee}</div>
+                  <div className="v">{fmt(profile?.tdee)}<span className="of"> kcal</span></div>
                 </div>
               </div>
-            </div>
-            <Sparkline points={weightSeries} />
-          </div>
 
-          {/* Recent meals */}
-          <h3 className="h3" style={{ marginBottom: 14 }}>{t.recent}</h3>
-          <div className="meals-list" style={{ marginBottom: 18 }}>
-            {recentMeals.map((m, i) => (
-              <div key={i} className="meal">
-                <div className="ic">{m.ic}</div>
-                <div className="name">{m.name}</div>
-                <div className="time">{m.time}</div>
-                <div className="kcal">{m.kcal} kcal</div>
+              {/* Weight history sparkline */}
+              <div className="dash-card" style={{ marginBottom: 24 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div className="k" style={{ marginBottom: 6 }}>{t.weight} · {t.weightSub}</div>
+                    {weightSeries.length > 0 ? (
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                        <span style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em" }}>
+                          {fmt(weightSeries[weightSeries.length - 1])}
+                        </span>
+                        <span style={{ color: "var(--ink-3)", fontSize: 14 }}>kg</span>
+                        {variation != null && (
+                          <span style={{
+                            color: variation <= 0 ? "#1aa85b" : "#c0392b",
+                            fontSize: 14,
+                            fontFamily: "var(--font-mono)"
+                          }}>
+                            {variation > 0 ? "+" : ""}{fmt(variation)} kg / 30j
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ color: "var(--ink-2)", fontSize: 14 }}>{t.noWeight}</div>
+                    )}
+                  </div>
+                </div>
+                {weightSeries.length > 1 && <Sparkline points={weightSeries} />}
               </div>
-            ))}
-          </div>
-          <a href="#" className="btn btn-ghost" onClick={(e) => e.preventDefault()}>
-            {t.viewAll} <Icons.arrow />
-          </a>
+
+              {/* Recent meals -> placeholder (no meals table yet) */}
+              <h3 className="h3" style={{ marginBottom: 14 }}>{t.recent}</h3>
+              <div className="dash-card" style={{ marginBottom: 18, textAlign: "center", padding: 28 }}>
+                <p style={{ color: "var(--ink-2)", margin: "0 0 18px", lineHeight: 1.55 }}>{t.recentEmpty}</p>
+                <a className="btn btn-ghost" href="https://yaps-nutrition.fr/download" onClick={(e) => e.preventDefault()}>
+                  {t.openApp} <Icons.arrow />
+                </a>
+              </div>
+            </>
+          )}
         </div>
       </section>
 

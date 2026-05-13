@@ -28,6 +28,31 @@
 <!-- Three.js (UMD) for the Hero3D scene -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 
+<!-- Supabase JS v2 (UMD) — real auth + data for connected users -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+<!-- YAPS Supabase config + singleton client (loaded BEFORE the React scripts) -->
+<script>
+  // Public anon key — protected by Row Level Security on Supabase.
+  // Safe to expose in client code (designed for that purpose).
+  window.YAPS_SUPABASE_URL = "https://kphimyaiwahxzcrzhedq.supabase.co";
+  window.YAPS_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwaGlteWFpd2FoeHpjcnpoZWRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTQ5NjIsImV4cCI6MjA5MzA3MDk2Mn0.7WNBl5Sl9Cgw28QkqOQjXnolKmsn96ALLeOJXU0WRsM";
+
+  // Singleton Supabase client used by the whole app
+  window.YAPS_SUPABASE = window.supabase.createClient(
+    window.YAPS_SUPABASE_URL,
+    window.YAPS_SUPABASE_ANON_KEY,
+    {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storage: window.localStorage,
+      },
+    }
+  );
+</script>
+
 <!-- App scripts -->
 <script type="text/babel" src="logo.jsx"></script>
 <script type="text/babel" src="chrome.jsx"></script>
