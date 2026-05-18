@@ -413,9 +413,12 @@ function StoreBadges({ lang = "fr" }) {
 /* Footer */
 function FooterLink({ item, navigate }) {
   const isRoute = item.href && item.href.startsWith("/");
+  const isExternal = item.href && item.href.startsWith("http");
   return (
     <a
       href={item.href}
+      target={isExternal ? "_blank" : undefined}
+      rel={isExternal ? "noopener noreferrer" : undefined}
       onClick={(e) => {
         if (isRoute) {
           e.preventDefault();
@@ -455,7 +458,7 @@ function Footer({ lang, setLang, navigate }) {
       ],
       social: [
         { label: "Instagram",   href: "#" },
-        { label: "TikTok",      href: "#" },
+        { label: "TikTok",      href: "https://www.tiktok.com/@yaps.nutrition" },
         { label: "X / Twitter", href: "#" },
         { label: "LinkedIn",    href: "#" },
       ],
@@ -488,7 +491,7 @@ function Footer({ lang, setLang, navigate }) {
       ],
       social: [
         { label: "Instagram",   href: "#" },
-        { label: "TikTok",      href: "#" },
+        { label: "TikTok",      href: "https://www.tiktok.com/@yaps.nutrition" },
         { label: "X / Twitter", href: "#" },
         { label: "LinkedIn",    href: "#" },
       ],
