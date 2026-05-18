@@ -3,7 +3,7 @@
 const I18N = {
   fr: {
     hero: {
-      eyebrow: "v1.2.0 · iOS · Android · 9,99€/mois",
+      eyebrow: "v1.4.2 · iOS · Android · 9,99€/mois",
       title_a: "Votre nutrition,",
       title_grad: "réinventée par l'IA",
       sub: "Suivez vos repas, atteignez vos objectifs et bénéficiez d'un coach IA personnel 24/7. Disponible sur iPhone et Android.",
@@ -36,7 +36,7 @@ const I18N = {
   },
   en: {
     hero: {
-      eyebrow: "v1.2.0 · iOS · Android · €9.99/mo",
+      eyebrow: "v1.4.2 · iOS · Android · €9.99/mo",
       title_a: "Your nutrition,",
       title_grad: "rethought by AI",
       sub: "Track your meals, hit your goals, and get a personal AI coach 24/7. Available on iPhone and Android.",
